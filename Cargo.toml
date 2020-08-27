@@ -1,0 +1,38 @@
+[package]
+name = "omst"
+version = "1.0.0"
+authors = ["ltdk <usr@ltdk.xyz>"]
+edition = "2018"
+description = "Reveals whomst thou art with a single character."
+readme = "README.md"
+repository = "https://vc.ltdk.xyz/cli/omst"
+license-file = "LICENSE.md"
+categories = ["command-line-utilities"]
+include = ["src/**/*", "LICENSE", "README.md", "CHANGELOG.md"]
+
+[badges]
+maintenance = { status = "passively-maintained" }
+
+[dependencies]
+cfg-if = "1.0.0"
+
+[target.'cfg(any(target_os = "dragonfly", target_os = "freebsd", target_os = "linux", target_os = "macos", target_os = "netbsd", target_os = "openbsd", target_os = "solaris"))'.dependencies]
+atoi = "0.3.2"
+libc = "0.2.116"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+winapi = { version = "0.3.9", features = ["impl-default", "lmaccess", "lmapibuf", "winbase"] }
+
+[features]
+default = []
+
+[profile.release]
+opt-level = "s"
+debug = false
+lto = true
+panic = "abort"
+codegen-units = 1
+
+[[bin]]
+name = "omst"
+path = "src/main.rs"
