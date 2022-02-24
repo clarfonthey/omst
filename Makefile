@@ -1,9 +1,21 @@
 PROJECT = omst
-VERSION = $(shell git describe)
+VERSION = $(shell cargo read-manifest | jq --raw-output .version)
 FILES = $(shell git ls-files src/ Cargo.toml Cargo.lock README.md LICENSE.md CHANGELOG.md Makefile)
+GITEA_TOKEN = $(shell yq --raw-output .logins[0].token ~/.config/tea/config.yml)
 
-dist: $(PROJECT)-$(VERSION).tar.xz
+.PHONY: dist upload
+.SILENT: upload
 
-$(PROJECT)-$(VERSION).tar.xz: $(FILES)
-	rm -f $(PROJECT)-$(VERSION).tar.xz
-	tar c -f - $(FILES) | xz -9 > $(PROJECT)-$(VERSION).tar.xz
+dist: $(PROJECT)-v$(VERSION).tar.xz
+
+$(PROJECT)-v$(VERSION).tar.xz: $(FILES)
+	rm -f $(PROJECT)-v$(VERSION).tar.xz
+	tar c -f - $(FILES) | xz -9 > $(PROJECT)-v$(VERSION).tar.xz
+
+upload: dist
+	echo curl \
+		--upload-file $(PROJECT)-v$(VERSION).tar.xz \
+		https://vc.ltdk.xyz/api/packages/cli/generic/$(PROJECT)/$(VERSION)/source.tar.xz
+	curl \
+		--upload-file $(PROJECT)-v$(VERSION).tar.xz \
+		https://cli:$(GITEA_TOKEN)@vc.ltdk.xyz/api/packages/cli/generic/$(PROJECT)/$(VERSION)/source.tar.xz

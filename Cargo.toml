@@ -1,6 +1,6 @@
 [package]
 name = "omst"
-version = "1.0.1"
+version = "1.0.2"
 authors = ["ltdk <usr@ltdk.xyz>"]
 edition = "2021"
 description = "Reveals whomst thou art with a single character."
@@ -17,7 +17,7 @@ maintenance = { status = "passively-maintained" }
 cfg-if = "1.0.0"
 
 [target.'cfg(any(target_os = "dragonfly", target_os = "freebsd", target_os = "linux", target_os = "macos", target_os = "netbsd", target_os = "openbsd", target_os = "solaris"))'.dependencies]
-atoi = "0.3.2"
+atoi = "2.0.0"
 libc = "0.2.116"
 
 [target.'cfg(target_os = "windows")'.dependencies]
