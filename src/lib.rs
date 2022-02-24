@@ -2,7 +2,7 @@
 //!
 //! This crate provides functions which ultimately are used to provide the functionality for the
 //! `omst` binary.
-#![feature(inherent_ascii_escape)]
+#![warn(unsafe_op_in_unsafe_fn)]
 
 cfg_if::cfg_if! {
     if #[cfg(windows)] {
@@ -84,4 +84,9 @@ impl Permissions {
     pub fn be(self) -> char {
         self as u8 as char
     }
+}
+
+#[test]
+fn is_known() {
+    assert_ne!(omst(), Permissions::Unknown);
 }

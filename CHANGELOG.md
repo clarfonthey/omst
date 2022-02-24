@@ -6,6 +6,10 @@ This project uses a **major**.**minor**.**micro** versioning scheme, where:
 * The minor version is bumped on minor changes to the `omst` crate, as defined by Rust RFC 1122.
 * The micro version is bumped in all other cases.
 
+# v1.0.1
+
+* [fixed] no longers `#[feature(inherent_ascii_escape)]` (feature was stabilised)
+
 # v1.0.0
 
 This is the first release.
