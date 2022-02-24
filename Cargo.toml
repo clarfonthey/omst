@@ -1,6 +1,6 @@
 [package]
 name = "omst"
-version = "1.0.0"
+version = "1.0.1"
 authors = ["ltdk <usr@ltdk.xyz>"]
 edition = "2021"
 description = "Reveals whomst thou art with a single character."
