@@ -6,6 +6,11 @@ This project uses a **major**.**minor**.**micro** versioning scheme, where:
 * The minor version is bumped on minor changes to the `omst` crate, as defined by Rust RFC 1122.
 * The micro version is bumped in all other cases.
 
+# v2.0.0
+
+* [added] `omst-be` binary which fully prints errors
+* [changed] `omst` function now returns a `Result`
+
 # v1.0.2
 
 * [changed] updated `atoi` dependency

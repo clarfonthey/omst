@@ -15,7 +15,7 @@
 use crate::Permissions;
 use std::error::Error as StdError;
 use std::fmt;
-use std::io::{Error as IoError, ErrorKind};
+use std::io::Error as IoError;
 use std::mem::size_of;
 use std::process::abort;
 use std::ptr;
@@ -29,21 +29,49 @@ use winapi::um::lmapibuf::NetApiBufferFree;
 use winapi::um::winbase::GetUserNameW;
 use winapi::um::winnt::WCHAR;
 
+/// Operation done when getting user privileges.
 #[derive(Debug)]
-struct InvalidPriv(DWORD);
-impl fmt::Display for InvalidPriv {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "user privileges returned invalid value {:#x}", self.0)
+pub enum Operation {
+    /// `GetUserNameW`.
+    GetUserName,
+
+    /// `NetNetUserGetInfo`.
+    NetUserGetInfo,
+}
+impl fmt::Display for Operation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.pad(match self {
+            Operation::GetUserName => "get username",
+            Operation::NetUserGetInfo => "get user info",
+        })
     }
 }
-impl StdError for InvalidPriv {}
 
-pub fn omst() -> Permissions {
-    match get_user_privs() {
-        Ok(perms) => perms,
-        Err(err) => {
-            eprintln!("{}", err);
-            Permissions::Unknown
+/// Error that can occur when getting permissions.
+#[derive(Debug)]
+pub enum Error {
+    /// Error getting privileges.
+    GetPriv {
+        /// Operation that failed.
+        operation: Operation,
+
+        /// Error that occurred.
+        error: IoError,
+    },
+
+    /// Invalid user privileges.
+    InvalidPriv { data: DWORD },
+}
+impl StdError for Error {}
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Error::GetPriv { operation, error } => {
+                write!(f, "could not {operation} due to error: {error}")
+            }
+            Error::InvalidPriv { data } => {
+                write!(f, "user privileges had invalid value ({data:#x})")
+            }
         }
     }
 }
@@ -65,7 +93,7 @@ impl Drop for UserInfoPtr {
     }
 }
 
-fn get_user_privs() -> Result<Permissions, IoError> {
+pub fn omst() -> Result<Permissions, Error> {
     let mut uname = [WCHAR::default(); UNLEN as usize];
     let mut ulen = size_of::<[WCHAR; UNLEN as usize]>() as DWORD;
     let mut uinfo = UserInfoPtr(ptr::null_mut());
@@ -73,7 +101,10 @@ fn get_user_privs() -> Result<Permissions, IoError> {
 
     let err = unsafe { GetUserNameW(uname.as_mut_ptr(), &mut ulen) };
     if err == 0 {
-        return Err(IoError::last_os_error());
+        return Err(Error::GetPriv {
+            operation: Operation::GetUserName,
+            error: IoError::last_os_error(),
+        });
     }
 
     let err = unsafe {
@@ -85,7 +116,10 @@ fn get_user_privs() -> Result<Permissions, IoError> {
         )
     };
     if err != 0 {
-        return Err(IoError::from_raw_os_error(err as i32));
+        return Err(Error::GetPriv {
+            operation: Operation::NetUserGetInfo,
+            error: IoError::from_raw_os_error(err as i32),
+        });
     }
 
     let privs = unsafe { *uinfo.0 }.usri1_priv;
@@ -93,6 +127,6 @@ fn get_user_privs() -> Result<Permissions, IoError> {
         USER_PRIV_ADMIN => Permissions::Absolute,
         USER_PRIV_GUEST => Permissions::Guest,
         USER_PRIV_USER => Permissions::User,
-        _ => return Err(IoError::new(ErrorKind::InvalidData, InvalidPriv(privs))),
+        _ => return Err(Error::InvalidPriv { data: privs }),
     })
 }

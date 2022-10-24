@@ -3,6 +3,7 @@
 //! This crate provides functions which ultimately are used to provide the functionality for the
 //! `omst` binary.
 #![warn(unsafe_op_in_unsafe_fn)]
+use core::fmt;
 
 cfg_if::cfg_if! {
     if #[cfg(windows)] {
@@ -14,7 +15,7 @@ cfg_if::cfg_if! {
     }
 }
 
-pub use r#impl::omst;
+pub use r#impl::{omst, Error};
 
 /// Summary of a user's permissions.
 ///
@@ -22,12 +23,6 @@ pub use r#impl::omst;
 #[derive(Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord, Debug)]
 #[repr(u8)]
 pub enum Permissions {
-    /// Unknown permissions.
-    ///
-    /// This is returned when an error occurs while retrieving permissions.
-    /// Additional error information may be printed to stderr in these cases.
-    Unknown = b'?',
-
     /// Restricted permissions.
     ///
     /// Usually, these users will be ephemeral and have their files deleted after logging out.
@@ -82,11 +77,63 @@ impl Permissions {
     /// Most often used as `omst().be()`.
     #[inline]
     pub fn be(self) -> char {
-        self as u8 as char
+        self.byte() as char
+    }
+}
+impl fmt::Display for Permissions {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.pad(match self {
+            Permissions::Guest => "guest",
+            Permissions::User => "user",
+            Permissions::System => "system",
+            Permissions::Absolute => "aboslute",
+        })
+    }
+}
+
+pub struct DisplayResult(Result<Permissions, Error>);
+impl fmt::Display for DisplayResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.0 {
+            Ok(ok) => fmt::Display::fmt(ok, f),
+            Err(err) => fmt::Display::fmt(err, f),
+        }
+    }
+}
+
+/// Extension trait for return value of [`omst`].
+pub trait ResultExt: Sized {
+    /// The permissions as a single ASCII character.
+    ///
+    /// In most cases, you want to use [`be`](Self::be) instead.
+    fn byte(self) -> u8;
+
+    /// The permissions as a single character.
+    ///
+    /// Most often used as `omst().be()`.
+    fn be(self) -> char;
+
+    /// The permissions as a displayable value.
+    ///
+    /// Will fully explain errors.
+    fn display(self) -> DisplayResult;
+}
+impl ResultExt for Result<Permissions, Error> {
+    #[inline]
+    fn byte(self) -> u8 {
+        self.map_or(b'?', Permissions::byte)
+    }
+    #[inline]
+    fn be(self) -> char {
+        self.byte() as char
+    }
+    #[inline]
+    fn display(self) -> DisplayResult {
+        DisplayResult(self)
     }
 }
 
 #[test]
 fn is_known() {
-    assert_ne!(omst(), Permissions::Unknown);
+    assert!(omst().is_ok());
 }

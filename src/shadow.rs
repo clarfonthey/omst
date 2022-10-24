@@ -22,7 +22,7 @@ use atoi::atoi;
 use std::error::Error as StdError;
 use std::fmt;
 use std::fs::File;
-use std::io::{BufRead, BufReader, Error as IoError, ErrorKind};
+use std::io::{BufRead, BufReader, Error as IoError};
 use std::ops::RangeInclusive;
 
 #[derive(Debug)]
@@ -34,23 +34,129 @@ impl fmt::Display for InvalidUid {
 }
 impl StdError for InvalidUid {}
 
+/// Operation performed on `/etc/login.defs`.
+#[derive(Debug)]
+pub enum Operation {
+    /// Opening the file.
+    Open,
+
+    /// Reading the file.
+    Read,
+}
+impl fmt::Display for Operation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.pad(match self {
+            Operation::Open => "open",
+            Operation::Read => "read",
+        })
+    }
+}
+
+/// Definition in `/etc/login.defs`.
+#[derive(Debug)]
+pub enum Def {
+    /// `UID_MIN`.
+    Min,
+
+    /// `UID_MAX`.
+    Max,
+}
+impl fmt::Display for Def {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.pad(match self {
+            Def::Min => "UID_MIN",
+            Def::Max => "UID_MAX",
+        })
+    }
+}
+
+/// Problem with a definition in `/etc/login.defs`.
+#[derive(Debug)]
+pub enum Problem {
+    /// Definition was missing.
+    Missing,
+
+    /// Definition was provided, but empty.
+    Empty,
+
+    /// Definition was not a valid UID.
+    Invalid {
+        /// Actual bytes of the UID.
+        data: Vec<u8>,
+    },
+}
+impl fmt::Display for Problem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Problem::Missing => write!(f, "was missing"),
+            Problem::Empty => write!(f, "was empty"),
+            Problem::Invalid { data } => write!(f, "was not a valid UID ({})", data.escape_ascii()),
+        }
+    }
+}
+
+/// Error that might occur when getting permissions.
+#[derive(Debug)]
+pub enum Error {
+    /// Error reading `/etc/login.defs`.
+    LoginDefs {
+        /// What operation caused the error.
+        operation: Operation,
+
+        /// The error.
+        error: IoError,
+    },
+
+    /// Invalid definition in `/etc/login.defs`.
+    InvalidDef {
+        /// Which definition was invalid.
+        def: Def,
+        /// What the problem was.
+        problem: Problem,
+    },
+}
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Error::LoginDefs { operation, error } => write!(
+                f,
+                "could not {operation} /etc/login.defs due to error: {error}"
+            ),
+            Error::InvalidDef { def, problem } => write!(f, "{def} in /etc/login.defs {problem}"),
+        }
+    }
+}
+impl StdError for Error {}
+impl Error {
+    fn login_defs(operation: Operation) -> impl FnOnce(IoError) -> Error {
+        move |error| Error::LoginDefs { operation, error }
+    }
+}
+
 /// Loads the `UID_MIN..=UID_MAX` range from `login.defs`.
 #[inline]
-fn login_defs_uid_range() -> Result<RangeInclusive<libc::uid_t>, IoError> {
+fn login_defs_uid_range() -> Result<RangeInclusive<libc::uid_t>, Error> {
     let mut min = None;
     let mut max = None;
 
-    let mut file = BufReader::new(File::open("/etc/login.defs")?);
+    let mut file =
+        BufReader::new(File::open("/etc/login.defs").map_err(Error::login_defs(Operation::Open))?);
 
     let mut vec = Vec::new();
     loop {
         vec.clear();
-        if file.read_until(b'\n', &mut vec)? == 0 {
-            let min = min.ok_or_else(|| {
-                IoError::new(ErrorKind::NotFound, "UID_MIN not defined in login.defs")
+        if file
+            .read_until(b'\n', &mut vec)
+            .map_err(Error::login_defs(Operation::Read))?
+            == 0
+        {
+            let min = min.ok_or(Error::InvalidDef {
+                def: Def::Min,
+                problem: Problem::Empty,
             })?;
-            let max = max.ok_or_else(|| {
-                IoError::new(ErrorKind::NotFound, "UID_MAX not defined in login.defs")
+            let max = max.ok_or(Error::InvalidDef {
+                def: Def::Max,
+                problem: Problem::Empty,
             })?;
             return Ok(min..=max);
         }
@@ -72,9 +178,9 @@ fn login_defs_uid_range() -> Result<RangeInclusive<libc::uid_t>, IoError> {
             None => (buf, &b""[..]),
         };
 
-        let is_min = match key {
-            b"UID_MIN" => true,
-            b"UID_MAX" => false,
+        let def = match key {
+            b"UID_MIN" => Def::Min,
+            b"UID_MAX" => Def::Max,
             _ => continue,
         };
 
@@ -82,14 +188,10 @@ fn login_defs_uid_range() -> Result<RangeInclusive<libc::uid_t>, IoError> {
         let buf = match val_pos {
             Some(pos) => &buf[pos..],
             None => {
-                return Err(IoError::new(
-                    ErrorKind::InvalidData,
-                    if is_min {
-                        "UID_MIN defined in login.defs without a value"
-                    } else {
-                        "UID_MAX defined in login.defs without a value"
-                    },
-                ))
+                return Err(Error::InvalidDef {
+                    def,
+                    problem: Problem::Empty,
+                })
             }
         };
 
@@ -100,42 +202,33 @@ fn login_defs_uid_range() -> Result<RangeInclusive<libc::uid_t>, IoError> {
         };
 
         match atoi::<libc::uid_t>(val) {
-            Some(id) => {
-                if is_min {
-                    min = Some(id);
-                } else {
-                    max = Some(id);
-                }
-            }
+            Some(id) => match def {
+                Def::Min => min = Some(id),
+                Def::Max => max = Some(id),
+            },
             None => {
-                return Err(IoError::new(
-                    ErrorKind::InvalidData,
-                    InvalidUid(val.to_vec()),
-                ))
+                return Err(Error::InvalidDef {
+                    def,
+                    problem: Problem::Invalid { data: val.to_vec() },
+                })
             }
         }
     }
 }
 
-pub fn omst() -> Permissions {
+pub fn omst() -> Result<Permissions, Error> {
     let eff = unsafe { libc::geteuid() };
     if eff == 0 {
-        Permissions::Absolute
+        Ok(Permissions::Absolute)
     } else {
-        match login_defs_uid_range() {
-            Ok(range) => {
-                if eff < *range.start() {
-                    Permissions::System
-                } else if eff > *range.end() {
-                    Permissions::Guest
-                } else {
-                    Permissions::User
-                }
+        login_defs_uid_range().map(|range| {
+            if eff < *range.start() {
+                Permissions::System
+            } else if eff > *range.end() {
+                Permissions::Guest
+            } else {
+                Permissions::User
             }
-            Err(err) => {
-                eprintln!("{}", err);
-                Permissions::Unknown
-            }
-        }
+        })
     }
 }

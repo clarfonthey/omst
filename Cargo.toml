@@ -1,6 +1,6 @@
 [package]
 name = "omst"
-version = "1.0.2"
+version = "2.0.0"
 authors = ["ltdk <usr@ltdk.xyz>"]
 edition = "2021"
 description = "Reveals whomst thou art with a single character."
@@ -35,4 +35,8 @@ codegen-units = 1
 
 [[bin]]
 name = "omst"
-path = "src/main.rs"
+path = "src/omst.rs"
+
+[[bin]]
+name = "omst-be"
+path = "src/omst_be.rs"
