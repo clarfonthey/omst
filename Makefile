@@ -1,6 +1,6 @@
 PROJECT = omst
 VERSION = $(shell cargo read-manifest | jq --raw-output .version)
-FILES = $(shell git ls-files src/ Cargo.toml Cargo.lock README.md LICENSE.md CHANGELOG.md Makefile)
+FILES = $(wildcard src/*.rs Cargo.toml Cargo.lock README.md LICENSE.md CHANGELOG.md Makefile)
 GITEA_TOKEN = $(shell yq --raw-output .logins[0].token ~/.config/tea/config.yml)
 
 .PHONY: dist upload
