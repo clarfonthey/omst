@@ -10,7 +10,7 @@ dist: $(PROJECT)-v$(VERSION).tar.xz
 
 $(PROJECT)-v$(VERSION).tar.xz: $(FILES)
 	rm -f $(PROJECT)-v$(VERSION).tar.xz
-	tar c -f - $(FILES) | xz -9 > $(PROJECT)-v$(VERSION).tar.xz
+	tar --mtime='1970-01-01' --create --file - $(FILES) | xz -9 > $(PROJECT)-v$(VERSION).tar.xz
 
 upload: dist
 	echo curl \

@@ -8,7 +8,7 @@ url="https://vc.ltdk.xyz/cli/omst"
 license=(ACSL)
 makedepends=(rustup)
 source=("$pkgname-v$pkgver.tar.xz")
-sha256sums=('06521b747b1062471f7760b930a684c7a8aaaf830c16e888f1d108b1b8e380ee')
+sha256sums=('8482604e146f97b109feb2ef50acbce2826bd0ebae9e2e041e729b6f73fc7eb1')
 
 prepare() {
     rustup install nightly
