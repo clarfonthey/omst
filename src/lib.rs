@@ -4,18 +4,29 @@
 //! `omst` binary.
 #![warn(unsafe_op_in_unsafe_fn)]
 use core::fmt;
+use std::io;
 
-cfg_if::cfg_if! {
-    if #[cfg(windows)] {
-        #[path = "winapi.rs"]
-        mod r#impl;
-    } else {
-        #[path = "shadow.rs"]
-        mod r#impl;
-    }
+/// Implementation for Windows API.
+#[cfg(windows)]
+pub mod winapi;
+
+/// Implementation for `shadow-utils`.
+#[cfg(not(windows))]
+pub mod shadow;
+
+// Actual implementation.
+#[cfg(not(windows))]
+use crate::shadow as r#impl;
+#[cfg(windows)]
+use crate::winapi as r#impl;
+
+/// Determines a user's [`Permissions`].
+#[inline]
+pub fn omst() -> io::Result<Permissions> {
+    r#impl::omst()
+        .map(Permissions::from)
+        .map_err(io::Error::from)
 }
-
-pub use r#impl::{omst, Error};
 
 /// Summary of a user's permissions.
 ///
@@ -91,7 +102,8 @@ impl fmt::Display for Permissions {
     }
 }
 
-pub struct DisplayResult(Result<Permissions, Error>);
+/// Displayed version of result for `omst-be`.
+pub struct DisplayResult(io::Result<Permissions>);
 impl fmt::Display for DisplayResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.0 {
@@ -118,7 +130,7 @@ pub trait ResultExt: Sized {
     /// Will fully explain errors.
     fn display(self) -> DisplayResult;
 }
-impl ResultExt for Result<Permissions, Error> {
+impl ResultExt for io::Result<Permissions> {
     #[inline]
     fn byte(self) -> u8 {
         self.map_or(b'?', Permissions::byte)

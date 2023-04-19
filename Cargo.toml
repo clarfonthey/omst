@@ -10,12 +10,6 @@ license-file = "LICENSE.md"
 categories = ["command-line-utilities"]
 include = ["src/**/*", "LICENSE", "README.md", "CHANGELOG.md"]
 
-[badges]
-maintenance = { status = "passively-maintained" }
-
-[dependencies]
-cfg-if = "1.0.0"
-
 [target.'cfg(any(target_os = "dragonfly", target_os = "freebsd", target_os = "linux", target_os = "macos", target_os = "netbsd", target_os = "openbsd", target_os = "solaris"))'.dependencies]
 atoi = "2.0.0"
 libc = "0.2.116"

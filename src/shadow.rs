@@ -1,38 +1,38 @@
-//! Determine the user permissions based upon the user ID and the data from `shadow-utils`.
-//!
-//! On all available systems, we assume that `uid == 0` is `root`, which we will always mark as
-//! [`Permissions::Absolute`]. Beyond that, the `login.defs` file provided by `shadow-utils` gives
-//! decent-enough information to help us guess the current user permissions.
-//!
-//! The `UID_MIN..=UID_MAX` range defined in `login.defs` determines the range of UIDs that are free
-//! to allocate to "ordinary" users, which we mark as [`Permissions::User`]. UIDs below `UID_MIN`
-//! are assumed to be system accounts, and UIDs above `UID_MAX` are assumed to be the `nobody` user
-//! and/or any guest users.
-//!
-//! Although `login.defs` technically defines `SYS_UID_MIN..=SYS_UID_MAX` for system users and
-//! `SUB_UID_MIN..=SUB_UID_MAX` for "subordinate users", these often don't tend to point to the
-//! full ranges and aren't required to fill the rest of the UID range.
-//!
-//! You can see more details in the man page for `login.defs(5)` on what exactly is defined by
-//! `login.defs`, and additionally check your own systems to see how well this assumption maps to
-//! your system's UIDs.
-
 use crate::Permissions;
 use atoi::atoi;
 use std::error::Error as StdError;
 use std::fmt;
 use std::fs::File;
-use std::io::{BufRead, BufReader, Error as IoError};
+use std::io::{self, BufRead, BufReader, ErrorKind};
 use std::ops::RangeInclusive;
 
-#[derive(Debug)]
-struct InvalidUid(Vec<u8>);
-impl fmt::Display for InvalidUid {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{} was not a valid UID", self.0.escape_ascii())
+/// UID range from `/etc/login.defs`.
+#[derive(Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord, Debug)]
+#[repr(u8)]
+pub enum UidRange {
+    /// Above `UID_MAX`.
+    AboveMax = b'%',
+
+    /// Inside `UID_MIN..=UID_MAX` range.
+    InRange = b'$',
+
+    /// Below `UID_MIN`.
+    BelowMin = b'@',
+
+    /// UID 0, root.
+    Zero = b'#',
+}
+impl From<UidRange> for Permissions {
+    #[inline]
+    fn from(range: UidRange) -> Permissions {
+        match range {
+            UidRange::AboveMax => Permissions::Guest,
+            UidRange::InRange => Permissions::User,
+            UidRange::BelowMin => Permissions::System,
+            UidRange::Zero => Permissions::Absolute,
+        }
     }
 }
-impl StdError for InvalidUid {}
 
 /// Operation performed on `/etc/login.defs`.
 #[derive(Debug)]
@@ -95,7 +95,7 @@ impl fmt::Display for Problem {
     }
 }
 
-/// Error that might occur when getting permissions.
+/// Error that might occur when getting permissions. (`shadow-utils` implementation)
 #[derive(Debug)]
 pub enum Error {
     /// Error reading `/etc/login.defs`.
@@ -104,13 +104,14 @@ pub enum Error {
         operation: Operation,
 
         /// The error.
-        error: IoError,
+        error: io::Error,
     },
 
     /// Invalid definition in `/etc/login.defs`.
     InvalidDef {
         /// Which definition was invalid.
         def: Def,
+
         /// What the problem was.
         problem: Problem,
     },
@@ -126,9 +127,23 @@ impl fmt::Display for Error {
         }
     }
 }
-impl StdError for Error {}
+impl StdError for Error {
+    #[inline]
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        match self {
+            Error::LoginDefs { error, .. } => Some(error),
+            Error::InvalidDef { .. } => None,
+        }
+    }
+}
+impl From<Error> for io::Error {
+    #[inline]
+    fn from(err: Error) -> io::Error {
+        io::Error::new(ErrorKind::InvalidData, err)
+    }
+}
 impl Error {
-    fn login_defs(operation: Operation) -> impl FnOnce(IoError) -> Error {
+    fn login_defs(operation: Operation) -> impl FnOnce(io::Error) -> Error {
         move |error| Error::LoginDefs { operation, error }
     }
 }
@@ -216,18 +231,38 @@ fn login_defs_uid_range() -> Result<RangeInclusive<libc::uid_t>, Error> {
     }
 }
 
-pub fn omst() -> Result<Permissions, Error> {
+/// Determine [`UidRange`] based upon the user ID and the data from `shadow-utils`.
+///
+/// On all available systems, we special-case `uid == 0` as [`UidRange::Zero`], which corresponds
+/// to [`Permissions::Absolute`](Permissions::Absolute). Beyond that, the `login.defs` file
+/// provided by `shadow-utils` gives decent-enough information to help us guess the current user
+/// permissions.
+///
+/// The `UID_MIN..=UID_MAX` range defined in `login.defs` determines the range of UIDs that are free
+/// to allocate to "ordinary" users, and we assign [`UidRange::BelowMin`], [`UidRange::InRange`],
+/// and [`UidRange::AboveMax`] depending on the UID's relation to the range. These are interpreted
+/// as [`Permissions::System`], [`Permissions::User`], and [`Permissions::Guest`], respectively.
+///
+/// Although `login.defs` technically defines `SYS_UID_MIN..=SYS_UID_MAX` for system users and
+/// `SUB_UID_MIN..=SUB_UID_MAX` for "subordinate users", these often don't tend to point to the
+/// full ranges and aren't required to fill the rest of the UID range. Additionally, not all systems
+/// will actually provide these ranges, so, we basically ignore them.
+///
+/// You can see more details in the man page for `login.defs(5)` on what exactly is defined by
+/// `login.defs`, and additionally check your own systems to see how well this assumption maps to
+/// your system's UIDs.
+pub fn omst() -> Result<UidRange, Error> {
     let eff = unsafe { libc::geteuid() };
     if eff == 0 {
-        Ok(Permissions::Absolute)
+        Ok(UidRange::Zero)
     } else {
         login_defs_uid_range().map(|range| {
             if eff < *range.start() {
-                Permissions::System
+                UidRange::BelowMin
             } else if eff > *range.end() {
-                Permissions::Guest
+                UidRange::AboveMax
             } else {
-                Permissions::User
+                UidRange::InRange
             }
         })
     }

@@ -1,21 +1,7 @@
-//! Determine the user permissions based upon the Windows API `NetUserGetInfo` function.
-//!
-//! The Windows API has several different ways of getting user permissions, but the way this
-//! library does so is by obtaining a `USER_INFO_1` struct and checking the `ussri1_priv` field;
-//! the value of this field is either `USER_PRIV_GUEST`, `USER_PRIV_USER`, or `USER_PRIV_ADMIN`
-//! depending on the permission level of the user, and these are mapped to [`Permissions::Guest`],
-//! [`Permissions::User`], and [`Permissions::Absolute`] respectively.
-//!
-//! To actually call the `NetUserGetInfo` function, we first call `GetUserNameW` to get the current
-//! user name, then pass this to `NetUserGetInfo` to obtain a `USER_INFO_1` struct with the data we
-//! need.
-//!
-//! The implementation was derived from
-//! [this answer on Stack Overflow](https://stackoverflow.com/a/45125995).
 use crate::Permissions;
 use std::error::Error as StdError;
 use std::fmt;
-use std::io::Error as IoError;
+use std::io::{self, ErrorKind};
 use std::mem::size_of;
 use std::process::abort;
 use std::ptr;
@@ -28,6 +14,30 @@ use winapi::um::lmaccess::{
 use winapi::um::lmapibuf::NetApiBufferFree;
 use winapi::um::winbase::GetUserNameW;
 use winapi::um::winnt::WCHAR;
+
+/// Windows user privileges.
+#[derive(Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord, Debug)]
+#[repr(u8)]
+pub enum Priv {
+    /// Guest user privileges.
+    Guest = b'%',
+
+    /// Regular user privileges.
+    User = b'$',
+
+    /// Administrator privileges.
+    Admin = b'#',
+}
+impl From<Priv> for crate::Permissions {
+    #[inline]
+    fn from(r#priv: Priv) -> crate::Permissions {
+        match r#priv {
+            Priv::Guest => Permissions::Guest,
+            Priv::User => Permissions::User,
+            Priv::Admin => Permissions::Absolute,
+        }
+    }
+}
 
 /// Operation done when getting user privileges.
 #[derive(Debug)]
@@ -47,7 +57,7 @@ impl fmt::Display for Operation {
     }
 }
 
-/// Error that can occur when getting permissions.
+/// Error that can occur when getting permissions from the Windows API.
 #[derive(Debug)]
 pub enum Error {
     /// Error getting privileges.
@@ -56,13 +66,30 @@ pub enum Error {
         operation: Operation,
 
         /// Error that occurred.
-        error: IoError,
+        error: io::Error,
     },
 
     /// Invalid user privileges.
     InvalidPriv { data: DWORD },
 }
-impl StdError for Error {}
+impl StdError for Error {
+    #[inline]
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        match self {
+            Error::GetPriv { error, .. } => Some(error),
+            Error::InvalidPriv { .. } => None,
+        }
+    }
+}
+impl From<Error> for io::Error {
+    #[inline]
+    fn from(err: Error) -> io::Error {
+        match err {
+            Error::GetPriv { error, .. } => io::Error::new(error.kind(), error),
+            Error::InvalidPriv { .. } => io::Error::new(ErrorKind::InvalidData, err),
+        }
+    }
+}
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -93,20 +120,33 @@ impl Drop for UserInfoPtr {
     }
 }
 
-pub fn omst() -> Result<Permissions, Error> {
+/// Determine [`Priv`] based upon the Windows API `NetUserGetInfo` function.
+///
+/// The Windows API has several different ways of getting user permissions, but the way this
+/// library does so is by obtaining a `USER_INFO_1` struct and checking the `usri1_priv` field;
+/// the value of this field is either `USER_PRIV_GUEST`, `USER_PRIV_USER`, or `USER_PRIV_ADMIN`
+/// depending on the permission level of the user, and these are mapped to [`Priv::Guest`],
+/// [`Priv::User`], and [`Priv::Admin`] respectively.
+///
+/// To actually call the `NetUserGetInfo` function, we first call `GetUserNameW` to get the current
+/// user name, then pass this to `NetUserGetInfo` to obtain a `USER_INFO_1` struct with the data we
+/// need.
+///
+/// The implementation was derived from
+/// [this answer on Stack Overflow](https://stackoverflow.com/a/45125995).
+pub fn omst() -> Result<Priv, Error> {
     let mut uname = [WCHAR::default(); UNLEN as usize];
     let mut ulen = size_of::<[WCHAR; UNLEN as usize]>() as DWORD;
-    let mut uinfo = UserInfoPtr(ptr::null_mut());
-    let uinfo_ptr = ptr::NonNull::from(&mut uinfo);
-
     let err = unsafe { GetUserNameW(uname.as_mut_ptr(), &mut ulen) };
     if err == 0 {
         return Err(Error::GetPriv {
             operation: Operation::GetUserName,
-            error: IoError::last_os_error(),
+            error: io::Error::last_os_error(),
         });
     }
 
+    let mut uinfo = UserInfoPtr(ptr::null_mut());
+    let uinfo_ptr = ptr::NonNull::from(&mut uinfo);
     let err = unsafe {
         NetUserGetInfo(
             ptr::null(),
@@ -118,15 +158,15 @@ pub fn omst() -> Result<Permissions, Error> {
     if err != 0 {
         return Err(Error::GetPriv {
             operation: Operation::NetUserGetInfo,
-            error: IoError::from_raw_os_error(err as i32),
+            error: io::Error::from_raw_os_error(err as i32),
         });
     }
 
     let privs = unsafe { *uinfo.0 }.usri1_priv;
     Ok(match privs {
-        USER_PRIV_ADMIN => Permissions::Absolute,
-        USER_PRIV_GUEST => Permissions::Guest,
-        USER_PRIV_USER => Permissions::User,
+        USER_PRIV_ADMIN => Priv::Admin,
+        USER_PRIV_GUEST => Priv::Guest,
+        USER_PRIV_USER => Priv::User,
         _ => return Err(Error::InvalidPriv { data: privs }),
     })
 }
